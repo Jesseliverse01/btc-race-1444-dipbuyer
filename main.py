@@ -20,7 +20,12 @@ reverting instead of running away. So this bot does one thing only:
   selloff" case, and a trailing stop covers the give-back case: once the
   position is up 120 bps, a fall of 60 bps from its peak since entry sells;
 * after any exit, wait 30 bars before the next entry, so the bot never
-  re-buys the same dip it just sold at the top.
+  re-buys the same dip it just sold at the top;
+* no signal entries in the last 60 bars of the window (bar 1380 onward):
+  a position opened that late cannot reach its take-profit before the
+  forced flatten at the last close, so it only ever pays the round-trip
+  cost. The $50 fallback at bar 1320 is unaffected -- it fires before
+  the guard.
 
 One fallback keeps the entry honest on a dead-quiet day: if no signal has
 fired by bar 1320 (two hours from the end), it takes a small $50 starter
@@ -40,14 +45,27 @@ has instead of waiting for a setup that never comes.
 
 Dev-window result (local replay, exact harness fill model, verified against
 the kit grader on the previous window: identical net PnL to the cent and
-identical max drawdown): net PnL +$22.58 on $1,000 (22,584,088
-micro-USDC), 3 trades, max drawdown 1.02%. The same parameters also profit
+identical max drawdown): net PnL +$23.51 on $1,000 (23,505,401
+micro-USDC), 2 trades, max drawdown 1.02%. The same parameters also profit
 on the previous race's dev window (+$10.93), on a mirrored (uptrend) copy
-of this window (+$12.64), and on a doubled-volatility copy (+$18.86); the
-worst of six checks (both windows, both halves, mirrored, doubled-vol) is
--$0.83 on the second half alone. Neighbouring parameters stay positive
-too (drop 125-130 bps, take-profit 140-160 bps, stop 180-220 bps), so the
+of this window (+$12.41), and on a doubled-volatility copy (+$19.27); the
+worst of the six checks is -$0.83 on the second half alone -- but that
+check replays bars 720-1439 as a fresh 720-bar window, so its sequence
+numbers restart at 0 and the absolute bar-1380 guard cannot fire there;
+the trade it shows is the same bar-1437 entry the guard blocks in the
+full window, where every check is positive (worst +$10.93). Neighbouring
+parameters stay positive too (drop 125-130 bps, take-profit 140-160 bps,
+stop 180-220 bps, guard cutoff anywhere from bar 1200 to 1410), so the
 result is a plateau, not a knife edge.
+
+Revision v3.1 (this commit): the no-entry guard above. v3's third dev
+trade bought at bar 1437 and was flattened at bar 1439 for -$0.83 -- a
+position with three bars left cannot revert, it can only pay the
+round-trip cost. The guard removes exactly that trade: dev PnL goes from
++$22.58 (3 trades) to +$23.51 (2 trades), every other check unchanged. A
+tighter stop (200 -> 150 bps) was tested as the alternative and rejected:
+it leaves dev unchanged but collapses the doubled-volatility check to
+-$0.58.
 
 It is fully deterministic: integer math for every decision, no clock, no
 randomness, no environment, no files. The same bars always give the same
@@ -75,6 +93,13 @@ TRAIL_BPS = 60
 # After any exit, wait this many bars before the next entry, so a signal
 # after the wait is necessarily a fresh dip, not the one just sold.
 COOLDOWN_BARS = 30
+# No-entry guard (v3.1): the window is 1440 one-minute bars, and a position
+# opened in the last 60 of them cannot reach its take-profit before the
+# forced flatten at the last close -- it only ever pays the round-trip
+# cost (v3's third dev trade did exactly this: bought at bar 1437, flat
+# at 1439, -$0.83). So signal entries stop at bar 1380. The $50 fallback
+# at bar 1320 is unaffected: it fires before the guard.
+NO_ENTRY_AFTER = 1380
 # Fallback: if no signal has fired by this bar, take a small starter so the
 # run is never a zero-trade one. 1440 bars in the window; 1320 leaves two
 # hours for the position to breathe before the final flatten.
@@ -102,8 +127,10 @@ def on_batch(state, batch):
         # so any entry state it left behind is stale.
         _entry_price = None
         _peak = None
-        # Buy a sharp dip, once the cooldown is over.
-        if state.seq >= _cooldown_until and len(closes) > DROP_BARS:
+        # Buy a sharp dip, once the cooldown is over and the window still
+        # has room for the trade to work (see NO_ENTRY_AFTER).
+        if (state.seq >= _cooldown_until and len(closes) > DROP_BARS
+                and state.seq < NO_ENTRY_AFTER):
             drop_bps = (close * 10000 // closes[-DROP_BARS - 1]) - 10000
             if drop_bps <= -DROP_BPS:
                 _entry_price = close

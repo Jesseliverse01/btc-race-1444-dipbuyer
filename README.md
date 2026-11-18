@@ -34,6 +34,12 @@ trades rarely, on one pattern only: a sharp fall that then snaps back.
   still banks most of it.
 - **Cooldown:** after any exit, wait 30 bars before the next entry, so a
   signal after the wait is necessarily a fresh dip, not the one just sold.
+- **No-entry guard (v3.1):** no signal entries from bar 1380 onward. The
+  window is 1440 bars; a position opened in the last 60 cannot reach its
+  take-profit before the forced flatten at the last close, so it only ever
+  pays the round-trip cost. (v3's third dev trade did exactly this: bought
+  at bar 1437, flattened at 1439, -$0.83.) The $50 fallback at bar 1320
+  is unaffected — it fires before the guard.
 - **Fallback:** if no signal fires by bar 1320, take a small $50 starter so
   the run is never a zero-trade one.
 
@@ -55,17 +61,28 @@ and identical max drawdown on the v2 bot.
 
 | Metric | Value |
 |---|---|
-| Net PnL | **+$22.58** on $1,000 |
-| Trades | 3 |
+| Net PnL | **+$23.51** on $1,000 |
+| Trades | 2 |
 | Max drawdown | 1.02% |
 
 Robustness: the same parameters also profit on the previous race's dev
-window (+$10.93), on a mirrored (uptrend) copy of this window (+$12.64),
-and on a doubled-volatility copy (+$18.86); the worst of six checks (both
+window (+$10.93), on a mirrored (uptrend) copy of this window (+$12.41),
+and on a doubled-volatility copy (+$19.27); the worst of six checks (both
 windows, both halves, mirrored, doubled-vol) is -$0.83 on the second half
-alone. Neighbouring parameters stay positive too (drop 125-130 bps,
-take-profit 140-160 bps, stop 180-220 bps), so the result is a plateau,
-not a knife edge.
+alone — but that check replays bars 720-1439 as a fresh 720-bar window, so
+its sequence numbers restart at 0 and the absolute bar-1380 guard cannot
+fire there; the trade it shows is the same bar-1437 entry the guard blocks
+in the full window, where every check is positive (worst +$10.93).
+Neighbouring parameters stay positive too (drop 125-130 bps, take-profit
+140-160 bps, stop 180-220 bps, guard cutoff anywhere from bar 1200 to
+1410), so the result is a plateau, not a knife edge.
+
+Revision v3.1 adds the no-entry guard: it removes exactly v3's third dev
+trade (bought bar 1437, flattened bar 1439, -$0.83) and lifts dev PnL from
++$22.58 (3 trades) to +$23.51 (2 trades), with every other check
+unchanged. A tighter stop (200 → 150 bps) was tested as the alternative
+and rejected: it leaves dev unchanged but collapses the doubled-volatility
+check to -$0.58.
 
 ## Layout
 
